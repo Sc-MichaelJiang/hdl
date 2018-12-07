@@ -48,14 +48,15 @@
 
 namespace eval adi_make {
   ##############################################################################
-  # to print debug step messages "set msg_level=1" (set adi_make::msg_level 1)
-  variable msg_level 0
+  # to print debug step messages "set debug_msg=1" (set adi_make::debug_msg 1)
+  variable debug_msg 0
   ##############################################################################
 
   variable library_dir
   variable PWD [pwd]
   variable root_hdl_folder
   variable done_list ""
+  variable indent_level ""
 
   # get library absolute path
   set root_hdl_folder ""
@@ -72,33 +73,31 @@ namespace eval adi_make {
   #----------------------------------------------------------------------------
   # have debug messages
   proc puts_msg { message } {
-    variable msg_level
-    if { $msg_level == 1 } {
-      puts $message
+    variable debug_msg
+    variable indent_level
+    if { $debug_msg == 1 } {
+      puts $indent_level$message
     }
   }
 
   #----------------------------------------------------------------------------
-  # search for project IP dependencies
-  proc get_prj_dependencies {} {
+  # returns the projects required set of libraries
+  proc get_libraries {} {
 
     set build_list ""
 
     set search_pattern "LIB_DEPS.*="
-    set match ""
     set fp1 [open ./Makefile r]
     set file_data [read $fp1]
     close $fp1
 
     set lines [split $file_data \n]
     foreach line $lines {
-      regexp $search_pattern $line match
-      if { $match != "" } {
+      if { [regexp $search_pattern $line] } {
         regsub -all $search_pattern $line "" library
         set library [string trim $library]
-        puts_msg "    - dependency library $library"
+        puts_msg "\t- project dep: $library"
         append build_list "$library "
-        set match ""
       }
     }
     return $build_list
@@ -113,7 +112,7 @@ namespace eval adi_make {
 
     set build_list $libraries
     if { $libraries == "all" } {
-      set build_list "[get_prj_dependencies]"
+      set build_list "[get_libraries]"
     }
 
     set libraries ""
@@ -159,9 +158,9 @@ namespace eval adi_make {
     # filter out non buildable libs (non *_ip.tcl)
     set buildable ""
     foreach fs $makefiles {
-      set ip_dir [file dirname $fs]
-      set ip_name "[file tail $ip_dir]_ip.tcl"
-      if { [file exists $ip_dir/$ip_name] } {
+      set lib_dir [file dirname $fs]
+      set lib_name "[file tail $lib_dir]_ip.tcl"
+      if { [file exists $lib_dir/$lib_name] } {
         append buildable "$fs "
       }
     }
@@ -171,12 +170,10 @@ namespace eval adi_make {
     foreach fs $makefiles {
       regsub /Makefile $fs "" fs
       if { $fs == "." } {
-        set fs [file normalize $fs]
-        set fs [file tail $fs]
-        set fs [string trim $fs]
+        set fs [string trim [file tail [file normalize $fs]]]
       }
       regsub .*library/ $fs "" fs
-      build_ip_dep $fs
+      build_lib $fs
     }
 
     cd $PWD
@@ -185,17 +182,20 @@ namespace eval adi_make {
 
   #----------------------------------------------------------------------------
   # IP build procedure
-  proc build_ip_dep { library } {
+  proc build_lib { library } {
 
     variable done_list
     variable library_dir
+    variable indent_level
 
-    puts_msg "DEBUG build_ip_dep proc"
+    append indent_level "\t" ;# debug messages
 
+    puts_msg "DEBUG build_lib proc (recursive called)"
 
     # determine if the IP was previously built in the current adi_make_lib.tcl call
     if { [regexp $library $done_list] } {
-      puts_msg "Build previously done on $library"
+      puts_msg "> Build previously done on $library"
+      regsub . $indent_level "" indent_level
       return
     } else {
       puts_msg "- Start build of $library"
@@ -208,35 +208,33 @@ namespace eval adi_make {
     set serch_pattern "XILINX_.*_DEPS.*="
     set dep_list ""
 
-    set match ""
     set fp1 [open $library_dir/$library/Makefile r]
     set file_data [read $fp1]
     close $fp1
 
     set lines [split $file_data \n]
     foreach line $lines {
-      regexp $serch_pattern $line match
-      if { $match != "" } {
+      if { [regexp $serch_pattern $line] } {
         regsub -all $serch_pattern $line "" lib_dep
         set lib_dep [string trim $lib_dep]
-        puts "    > dependency library $lib_dep"
+        puts_msg "\t$library is dependent on $lib_dep"
         append dep_list "$lib_dep "
-        set match ""
       }
     }
 
     foreach lib $dep_list {
-      build_ip_dep $lib
+      build_lib $lib
     }
 
     puts_msg "- Continue build on $library"
-    set ip_name "[file tail $library]_ip"
+    set lib_name "[file tail $library]_ip"
 
     cd $library_dir/${library}
-    exec vivado -mode batch -source "$library_dir/${library}/${ip_name}.tcl"
-    file copy -force ./vivado.log ./${ip_name}.log
+    exec vivado -mode batch -source "$library_dir/${library}/${lib_name}.tcl"
+    file copy -force ./vivado.log ./${lib_name}.log
     puts "- Done building $library"
     append done_list $library
+    regsub . $indent_level "" indent_level
   }
 
   #----------------------------------------------------------------------------
@@ -285,7 +283,7 @@ namespace eval adi_make {
 
     set xsct_script "exec xsct $root_hdl_folder/projects/scripts/adi_make_boot_bin.tcl"
     set build_args "$hdf_file $uboot_elf $boot_bin_folder $arm_tr_sw_elf"
-    puts "Please wait, this may take a few moments."
+    puts "Please wait, this may take a few minutes."
     eval $xsct_script $build_args
   }
 
